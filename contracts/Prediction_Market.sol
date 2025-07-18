@@ -193,4 +193,18 @@ contract Project {
     {
         return markets[marketId].optionPools[optionIndex];
     }
+
+    // ✅ New Function: Get total amount a user bet across all options in a market
+    function getTotalUserBet(uint256 marketId, address user)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256 totalBet)
+    {
+        Market storage market = markets[marketId];
+        uint256 optionsLength = market.options.length;
+        for (uint256 i = 0; i < optionsLength; i++) {
+            totalBet += market.userBets[user][i];
+        }
+    }
 }
