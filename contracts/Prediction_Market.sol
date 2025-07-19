@@ -122,7 +122,7 @@ contract Project {
         emit MarketResolved(marketId, winningOption, market.totalPool);
     }
 
-    // Additional helper function: Withdraw winnings
+    // Withdraw winnings after market is resolved
     function withdrawWinnings(uint256 marketId) 
         external 
         marketExists(marketId) 
@@ -136,17 +136,40 @@ contract Project {
         uint256 winningPool = market.optionPools[market.winningOption];
         require(winningPool > 0, "No winning pool");
         
-        // Calculate winnings: (user's bet / winning pool) * total pool * (1 - platform fee)
         uint256 platformFeeAmount = (market.totalPool * PLATFORM_FEE) / 100;
         uint256 distributionPool = market.totalPool - platformFeeAmount;
         uint256 winnings = (userBet * distributionPool) / winningPool;
         
-        // Reset user's bet to prevent double withdrawal
         market.userBets[msg.sender][market.winningOption] = 0;
         
         payable(msg.sender).transfer(winnings);
         
         emit WinningsWithdrawn(marketId, msg.sender, winnings);
+    }
+
+    // ✅ New Feature: Refund user bets if market is unresolved after deadline
+    function refundUnresolved(uint256 marketId) 
+        external 
+        marketExists(marketId) 
+    {
+        Market storage market = markets[marketId];
+        require(block.timestamp >= market.deadline, "Market is still active");
+        require(!market.resolved, "Market already resolved");
+
+        uint256 refundedAmount;
+
+        for (uint256 i = 0; i < market.options.length; i++) {
+            uint256 betAmount = market.userBets[msg.sender][i];
+            if (betAmount > 0) {
+                refundedAmount += betAmount;
+                market.userBets[msg.sender][i] = 0;
+                market.optionPools[i] -= betAmount;
+                market.totalPool -= betAmount;
+            }
+        }
+
+        require(refundedAmount > 0, "No bets to refund");
+        payable(msg.sender).transfer(refundedAmount);
     }
 
     // View functions
@@ -194,7 +217,7 @@ contract Project {
         return markets[marketId].optionPools[optionIndex];
     }
 
-    // ✅ New Function: Get total amount a user bet across all options in a market
+    // ✅ View: Get total user bet in a market across all options
     function getTotalUserBet(uint256 marketId, address user)
         external
         view
