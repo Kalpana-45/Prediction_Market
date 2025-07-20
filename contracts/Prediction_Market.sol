@@ -7,6 +7,7 @@ contract Project {
         string[] options;
         uint256 deadline;
         bool resolved;
+        bool cancelled; // ✅ New field
         uint256 winningOption;
         address creator;
         uint256 totalPool;
@@ -46,6 +47,8 @@ contract Project {
         uint256 amount
     );
 
+    event MarketCancelled(uint256 indexed marketId); // ✅ New event
+
     modifier marketExists(uint256 marketId) {
         require(marketId < marketCount, "Market does not exist");
         _;
@@ -54,15 +57,15 @@ contract Project {
     modifier marketActive(uint256 marketId) {
         require(block.timestamp < markets[marketId].deadline, "Market has expired");
         require(!markets[marketId].resolved, "Market already resolved");
+        require(!markets[marketId].cancelled, "Market is cancelled");
         _;
     }
 
     modifier onlyMarketCreator(uint256 marketId) {
-        require(msg.sender == markets[marketId].creator, "Only market creator can resolve");
+        require(msg.sender == markets[marketId].creator, "Only market creator can resolve or cancel");
         _;
     }
 
-    // Core Function 1: Create a new prediction market
     function createMarket(
         string memory question,
         string[] memory options,
@@ -74,11 +77,12 @@ contract Project {
 
         uint256 marketId = marketCount++;
         Market storage market = markets[marketId];
-        
+
         market.question = question;
         market.options = options;
         market.deadline = block.timestamp + duration;
         market.resolved = false;
+        market.cancelled = false;
         market.creator = msg.sender;
         market.totalPool = 0;
 
@@ -86,7 +90,6 @@ contract Project {
         return marketId;
     }
 
-    // Core Function 2: Place a bet on a market option
     function placeBet(uint256 marketId, uint256 optionIndex) 
         external 
         payable 
@@ -97,7 +100,7 @@ contract Project {
         require(optionIndex < markets[marketId].options.length, "Invalid option");
 
         Market storage market = markets[marketId];
-        
+
         market.userBets[msg.sender][optionIndex] += msg.value;
         market.optionPools[optionIndex] += msg.value;
         market.totalPool += msg.value;
@@ -105,13 +108,13 @@ contract Project {
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
 
-    // Core Function 3: Resolve market and allow winners to withdraw
     function resolveMarket(uint256 marketId, uint256 winningOption) 
         external 
         marketExists(marketId) 
         onlyMarketCreator(marketId) 
     {
         Market storage market = markets[marketId];
+        require(!market.cancelled, "Market has been cancelled");
         require(block.timestamp >= market.deadline, "Market not yet expired");
         require(!market.resolved, "Market already resolved");
         require(winningOption < market.options.length, "Invalid winning option");
@@ -122,32 +125,31 @@ contract Project {
         emit MarketResolved(marketId, winningOption, market.totalPool);
     }
 
-    // Withdraw winnings after market is resolved
     function withdrawWinnings(uint256 marketId) 
         external 
         marketExists(marketId) 
     {
         Market storage market = markets[marketId];
         require(market.resolved, "Market not resolved yet");
-        
+        require(!market.cancelled, "Market has been cancelled");
+
         uint256 userBet = market.userBets[msg.sender][market.winningOption];
         require(userBet > 0, "No winning bet found");
-        
+
         uint256 winningPool = market.optionPools[market.winningOption];
         require(winningPool > 0, "No winning pool");
-        
+
         uint256 platformFeeAmount = (market.totalPool * PLATFORM_FEE) / 100;
         uint256 distributionPool = market.totalPool - platformFeeAmount;
         uint256 winnings = (userBet * distributionPool) / winningPool;
-        
+
         market.userBets[msg.sender][market.winningOption] = 0;
-        
+
         payable(msg.sender).transfer(winnings);
-        
+
         emit WinningsWithdrawn(marketId, msg.sender, winnings);
     }
 
-    // ✅ New Feature: Refund user bets if market is unresolved after deadline
     function refundUnresolved(uint256 marketId) 
         external 
         marketExists(marketId) 
@@ -155,6 +157,7 @@ contract Project {
         Market storage market = markets[marketId];
         require(block.timestamp >= market.deadline, "Market is still active");
         require(!market.resolved, "Market already resolved");
+        require(!market.cancelled, "Market already cancelled");
 
         uint256 refundedAmount;
 
@@ -172,7 +175,22 @@ contract Project {
         payable(msg.sender).transfer(refundedAmount);
     }
 
-    // View functions
+    // ✅ New Feature: Cancel market before deadline if no bets
+    function cancelMarket(uint256 marketId)
+        external
+        marketExists(marketId)
+        onlyMarketCreator(marketId)
+    {
+        Market storage market = markets[marketId];
+        require(!market.resolved, "Market already resolved");
+        require(!market.cancelled, "Market already cancelled");
+        require(block.timestamp < market.deadline, "Market already expired");
+        require(market.totalPool == 0, "Cannot cancel a market with bets");
+
+        market.cancelled = true;
+        emit MarketCancelled(marketId);
+    }
+
     function getMarketDetails(uint256 marketId) 
         external 
         view 
@@ -184,7 +202,8 @@ contract Project {
             bool resolved,
             uint256 winningOption,
             address creator,
-            uint256 totalPool
+            uint256 totalPool,
+            bool cancelled
         ) 
     {
         Market storage market = markets[marketId];
@@ -195,7 +214,8 @@ contract Project {
             market.resolved,
             market.winningOption,
             market.creator,
-            market.totalPool
+            market.totalPool,
+            market.cancelled
         );
     }
 
@@ -217,7 +237,6 @@ contract Project {
         return markets[marketId].optionPools[optionIndex];
     }
 
-    // ✅ View: Get total user bet in a market across all options
     function getTotalUserBet(uint256 marketId, address user)
         external
         view
