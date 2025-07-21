@@ -7,7 +7,7 @@ contract Project {
         string[] options;
         uint256 deadline;
         bool resolved;
-        bool cancelled; // ✅ New field
+        bool cancelled;
         uint256 winningOption;
         address creator;
         uint256 totalPool;
@@ -18,7 +18,7 @@ contract Project {
     mapping(uint256 => Market) public markets;
     uint256 public marketCount;
     uint256 public constant MINIMUM_BET = 0.001 ether;
-    uint256 public constant PLATFORM_FEE = 2; // 2% platform fee
+    uint256 public constant PLATFORM_FEE = 2;
 
     event MarketCreated(
         uint256 indexed marketId,
@@ -47,7 +47,7 @@ contract Project {
         uint256 amount
     );
 
-    event MarketCancelled(uint256 indexed marketId); // ✅ New event
+    event MarketCancelled(uint256 indexed marketId);
 
     modifier marketExists(uint256 marketId) {
         require(marketId < marketCount, "Market does not exist");
@@ -175,7 +175,6 @@ contract Project {
         payable(msg.sender).transfer(refundedAmount);
     }
 
-    // ✅ New Feature: Cancel market before deadline if no bets
     function cancelMarket(uint256 marketId)
         external
         marketExists(marketId)
@@ -249,4 +248,22 @@ contract Project {
             totalBet += market.userBets[user][i];
         }
     }
-}
+
+    // ✅ NEW FUNCTION: Get all user bets in a market
+    function getAllUserBets(uint256 marketId, address user)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256[] memory optionIndexes, uint256[] memory betAmounts)
+    {
+        Market storage market = markets[marketId];
+        uint256 optionsLength = market.options.length;
+
+        optionIndexes = new uint256[](optionsLength);
+        betAmounts = new uint256[](optionsLength);
+
+        for (uint256 i = 0; i < optionsLength; i++) {
+            optionIndexes[i] = i;
+            betAmounts[i] = market.userBets[user][i];
+        }
+   
