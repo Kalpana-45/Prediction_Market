@@ -249,7 +249,6 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get all user bets in a market
     function getAllUserBets(uint256 marketId, address user)
         external
         view
@@ -266,4 +265,17 @@ contract Project {
             optionIndexes[i] = i;
             betAmounts[i] = market.userBets[user][i];
         }
-   
+    }
+
+    // ✅ New Function: Get the total pool for the winning option
+    function getWinningOptionPool(uint256 marketId) 
+        external 
+        view 
+        marketExists(marketId) 
+        returns (uint256) 
+    {
+        Market storage market = markets[marketId];
+        require(market.resolved, "Market not resolved yet");
+        return market.optionPools[market.winningOption];
+    }
+}
