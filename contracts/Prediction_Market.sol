@@ -267,7 +267,7 @@ contract Project {
         }
     }
 
-    // ✅ New Function: Get the total pool for the winning option
+    // ✅ Get the total pool for the winning option
     function getWinningOptionPool(uint256 marketId) 
         external 
         view 
@@ -277,5 +277,14 @@ contract Project {
         Market storage market = markets[marketId];
         require(market.resolved, "Market not resolved yet");
         return market.optionPools[market.winningOption];
+    }
+
+    // ✅ NEW FUNCTION: Get all market IDs
+    function getAllMarkets() external view returns (uint256[] memory) {
+        uint256[] memory allMarkets = new uint256[](marketCount);
+        for (uint256 i = 0; i < marketCount; i++) {
+            allMarkets[i] = i;
+        }
+        return allMarkets;
     }
 }
