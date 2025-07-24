@@ -48,6 +48,7 @@ contract Project {
     );
 
     event MarketCancelled(uint256 indexed marketId);
+    event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline); // ✅ New Event
 
     modifier marketExists(uint256 marketId) {
         require(marketId < marketCount, "Market does not exist");
@@ -267,7 +268,6 @@ contract Project {
         }
     }
 
-    // ✅ Get the total pool for the winning option
     function getWinningOptionPool(uint256 marketId) 
         external 
         view 
@@ -279,12 +279,27 @@ contract Project {
         return market.optionPools[market.winningOption];
     }
 
-    // ✅ NEW FUNCTION: Get all market IDs
     function getAllMarkets() external view returns (uint256[] memory) {
         uint256[] memory allMarkets = new uint256[](marketCount);
         for (uint256 i = 0; i < marketCount; i++) {
             allMarkets[i] = i;
         }
         return allMarkets;
+    }
+
+    // ✅ New Function: Update Deadline
+    function updateDeadline(uint256 marketId, uint256 additionalTime)
+        external
+        marketExists(marketId)
+        onlyMarketCreator(marketId)
+    {
+        Market storage market = markets[marketId];
+        require(!market.resolved, "Market already resolved");
+        require(!market.cancelled, "Market is cancelled");
+        require(block.timestamp < market.deadline, "Market already expired");
+        require(additionalTime > 0, "Time must be greater than 0");
+
+        market.deadline += additionalTime;
+        emit DeadlineUpdated(marketId, market.deadline);
     }
 }
