@@ -48,7 +48,7 @@ contract Project {
     );
 
     event MarketCancelled(uint256 indexed marketId);
-    event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline); // ✅ New Event
+    event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline);
 
     modifier marketExists(uint256 marketId) {
         require(marketId < marketCount, "Market does not exist");
@@ -287,7 +287,6 @@ contract Project {
         return allMarkets;
     }
 
-    // ✅ New Function: Update Deadline
     function updateDeadline(uint256 marketId, uint256 additionalTime)
         external
         marketExists(marketId)
@@ -301,5 +300,29 @@ contract Project {
 
         market.deadline += additionalTime;
         emit DeadlineUpdated(marketId, market.deadline);
+    }
+
+    // ✅ New Function: Check User Potential Winnings
+    function getUserWinnings(uint256 marketId, address user)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256)
+    {
+        Market storage market = markets[marketId];
+        require(market.resolved, "Market not resolved yet");
+        require(!market.cancelled, "Market was cancelled");
+
+        uint256 userBet = market.userBets[user][market.winningOption];
+        if (userBet == 0) return 0;
+
+        uint256 winningPool = market.optionPools[market.winningOption];
+        if (winningPool == 0) return 0;
+
+        uint256 platformFeeAmount = (market.totalPool * PLATFORM_FEE) / 100;
+        uint256 distributionPool = market.totalPool - platformFeeAmount;
+        uint256 winnings = (userBet * distributionPool) / winningPool;
+
+        return winnings;
     }
 }
