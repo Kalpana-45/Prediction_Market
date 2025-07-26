@@ -11,44 +11,41 @@ contract Project {
         uint256 winningOption;
         address creator;
         uint256 totalPool;
+        string category;
+        bool bettingPaused;
+        uint256 minBet;
+        uint256 maxBet;
         mapping(uint256 => uint256) optionPools;
         mapping(address => mapping(uint256 => uint256)) userBets;
     }
 
-    mapping(uint256 => Market) public markets;
+    address public admin;
     uint256 public marketCount;
-    uint256 public constant MINIMUM_BET = 0.001 ether;
     uint256 public constant PLATFORM_FEE = 2;
+
+    mapping(uint256 => Market) public markets;
+    mapping(address => uint256[]) public userHistory;
 
     event MarketCreated(
         uint256 indexed marketId,
         string question,
         string[] options,
         uint256 deadline,
-        address creator
+        address creator,
+        string category
     );
 
-    event BetPlaced(
-        uint256 indexed marketId,
-        address indexed user,
-        uint256 optionIndex,
-        uint256 amount
-    );
-
-    event MarketResolved(
-        uint256 indexed marketId,
-        uint256 winningOption,
-        uint256 totalPool
-    );
-
-    event WinningsWithdrawn(
-        uint256 indexed marketId,
-        address indexed user,
-        uint256 amount
-    );
-
+    event BetPlaced(uint256 indexed marketId, address indexed user, uint256 optionIndex, uint256 amount);
+    event MarketResolved(uint256 indexed marketId, uint256 winningOption, uint256 totalPool);
+    event WinningsWithdrawn(uint256 indexed marketId, address indexed user, uint256 amount);
     event MarketCancelled(uint256 indexed marketId);
     event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline);
+    event BettingPaused(uint256 indexed marketId, bool status);
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only admin can perform this action");
+        _;
+    }
 
     modifier marketExists(uint256 marketId) {
         require(marketId < marketCount, "Market does not exist");
@@ -56,25 +53,34 @@ contract Project {
     }
 
     modifier marketActive(uint256 marketId) {
-        require(block.timestamp < markets[marketId].deadline, "Market has expired");
-        require(!markets[marketId].resolved, "Market already resolved");
-        require(!markets[marketId].cancelled, "Market is cancelled");
+        Market storage market = markets[marketId];
+        require(block.timestamp < market.deadline, "Market expired");
+        require(!market.resolved, "Market already resolved");
+        require(!market.cancelled, "Market is cancelled");
+        require(!market.bettingPaused, "Betting is paused");
         _;
     }
 
     modifier onlyMarketCreator(uint256 marketId) {
-        require(msg.sender == markets[marketId].creator, "Only market creator can resolve or cancel");
+        require(msg.sender == markets[marketId].creator, "Only market creator allowed");
         _;
+    }
+
+    constructor() {
+        admin = msg.sender;
     }
 
     function createMarket(
         string memory question,
         string[] memory options,
-        uint256 duration
+        uint256 duration,
+        string memory category,
+        uint256 minBet,
+        uint256 maxBet
     ) external returns (uint256) {
-        require(options.length >= 2, "Market must have at least 2 options");
-        require(duration > 0, "Duration must be positive");
-        require(bytes(question).length > 0, "Question cannot be empty");
+        require(options.length >= 2, "Need at least 2 options");
+        require(duration > 0, "Duration must be greater than zero");
+        require(bytes(question).length > 0, "Question is required");
 
         uint256 marketId = marketCount++;
         Market storage market = markets[marketId];
@@ -82,43 +88,47 @@ contract Project {
         market.question = question;
         market.options = options;
         market.deadline = block.timestamp + duration;
+        market.creator = msg.sender;
+        market.category = category;
+        market.minBet = minBet;
+        market.maxBet = maxBet;
         market.resolved = false;
         market.cancelled = false;
-        market.creator = msg.sender;
-        market.totalPool = 0;
 
-        emit MarketCreated(marketId, question, options, market.deadline, msg.sender);
+        emit MarketCreated(marketId, question, options, market.deadline, msg.sender, category);
         return marketId;
     }
 
-    function placeBet(uint256 marketId, uint256 optionIndex) 
-        external 
-        payable 
-        marketExists(marketId) 
-        marketActive(marketId) 
+    function placeBet(uint256 marketId, uint256 optionIndex)
+        external
+        payable
+        marketExists(marketId)
+        marketActive(marketId)
     {
-        require(msg.value >= MINIMUM_BET, "Bet amount too low");
-        require(optionIndex < markets[marketId].options.length, "Invalid option");
-
         Market storage market = markets[marketId];
+        require(msg.value >= market.minBet, "Bet below minimum limit");
+        require(msg.value <= market.maxBet, "Bet exceeds maximum limit");
+        require(optionIndex < market.options.length, "Invalid option");
 
         market.userBets[msg.sender][optionIndex] += msg.value;
         market.optionPools[optionIndex] += msg.value;
         market.totalPool += msg.value;
 
+        userHistory[msg.sender].push(marketId);
+
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
 
-    function resolveMarket(uint256 marketId, uint256 winningOption) 
-        external 
-        marketExists(marketId) 
-        onlyMarketCreator(marketId) 
+    function resolveMarket(uint256 marketId, uint256 winningOption)
+        external
+        marketExists(marketId)
+        onlyMarketCreator(marketId)
     {
         Market storage market = markets[marketId];
-        require(!market.cancelled, "Market has been cancelled");
+        require(!market.resolved, "Already resolved");
+        require(!market.cancelled, "Market cancelled");
         require(block.timestamp >= market.deadline, "Market not yet expired");
-        require(!market.resolved, "Market already resolved");
-        require(winningOption < market.options.length, "Invalid winning option");
+        require(winningOption < market.options.length, "Invalid option");
 
         market.resolved = true;
         market.winningOption = winningOption;
@@ -126,54 +136,60 @@ contract Project {
         emit MarketResolved(marketId, winningOption, market.totalPool);
     }
 
-    function withdrawWinnings(uint256 marketId) 
-        external 
-        marketExists(marketId) 
+    function emergencyResolveMarket(uint256 marketId, uint256 winningOption)
+        external
+        onlyAdmin
+        marketExists(marketId)
     {
         Market storage market = markets[marketId];
-        require(market.resolved, "Market not resolved yet");
-        require(!market.cancelled, "Market has been cancelled");
+        require(!market.resolved, "Already resolved");
+        require(!market.cancelled, "Market cancelled");
+        require(winningOption < market.options.length, "Invalid option");
 
-        uint256 userBet = market.userBets[msg.sender][market.winningOption];
-        require(userBet > 0, "No winning bet found");
+        market.resolved = true;
+        market.winningOption = winningOption;
 
-        uint256 winningPool = market.optionPools[market.winningOption];
-        require(winningPool > 0, "No winning pool");
-
-        uint256 platformFeeAmount = (market.totalPool * PLATFORM_FEE) / 100;
-        uint256 distributionPool = market.totalPool - platformFeeAmount;
-        uint256 winnings = (userBet * distributionPool) / winningPool;
-
-        market.userBets[msg.sender][market.winningOption] = 0;
-
-        payable(msg.sender).transfer(winnings);
-
-        emit WinningsWithdrawn(marketId, msg.sender, winnings);
+        emit MarketResolved(marketId, winningOption, market.totalPool);
     }
 
-    function refundUnresolved(uint256 marketId) 
-        external 
-        marketExists(marketId) 
-    {
+    function withdrawWinnings(uint256 marketId) external marketExists(marketId) {
         Market storage market = markets[marketId];
-        require(block.timestamp >= market.deadline, "Market is still active");
-        require(!market.resolved, "Market already resolved");
-        require(!market.cancelled, "Market already cancelled");
+        require(market.resolved, "Market not resolved");
+        require(!market.cancelled, "Market was cancelled");
 
-        uint256 refundedAmount;
+        uint256 betAmount = market.userBets[msg.sender][market.winningOption];
+        require(betAmount > 0, "No winnings to withdraw");
+
+        uint256 platformFee = (market.totalPool * PLATFORM_FEE) / 100;
+        uint256 poolToDistribute = market.totalPool - platformFee;
+        uint256 winningPool = market.optionPools[market.winningOption];
+        uint256 userShare = (betAmount * poolToDistribute) / winningPool;
+
+        market.userBets[msg.sender][market.winningOption] = 0;
+        payable(msg.sender).transfer(userShare);
+
+        emit WinningsWithdrawn(marketId, msg.sender, userShare);
+    }
+
+    function refundUnresolved(uint256 marketId) external marketExists(marketId) {
+        Market storage market = markets[marketId];
+        require(block.timestamp >= market.deadline, "Still active");
+        require(!market.resolved && !market.cancelled, "Not eligible for refund");
+
+        uint256 refundAmount;
 
         for (uint256 i = 0; i < market.options.length; i++) {
-            uint256 betAmount = market.userBets[msg.sender][i];
-            if (betAmount > 0) {
-                refundedAmount += betAmount;
+            uint256 bet = market.userBets[msg.sender][i];
+            if (bet > 0) {
+                refundAmount += bet;
                 market.userBets[msg.sender][i] = 0;
-                market.optionPools[i] -= betAmount;
-                market.totalPool -= betAmount;
+                market.optionPools[i] -= bet;
+                market.totalPool -= bet;
             }
         }
 
-        require(refundedAmount > 0, "No bets to refund");
-        payable(msg.sender).transfer(refundedAmount);
+        require(refundAmount > 0, "No bets found");
+        payable(msg.sender).transfer(refundAmount);
     }
 
     function cancelMarket(uint256 marketId)
@@ -182,19 +198,64 @@ contract Project {
         onlyMarketCreator(marketId)
     {
         Market storage market = markets[marketId];
-        require(!market.resolved, "Market already resolved");
-        require(!market.cancelled, "Market already cancelled");
-        require(block.timestamp < market.deadline, "Market already expired");
-        require(market.totalPool == 0, "Cannot cancel a market with bets");
+        require(!market.resolved, "Already resolved");
+        require(!market.cancelled, "Already cancelled");
+        require(block.timestamp < market.deadline, "Already expired");
+        require(market.totalPool == 0, "Bets already placed");
 
         market.cancelled = true;
         emit MarketCancelled(marketId);
     }
 
-    function getMarketDetails(uint256 marketId) 
-        external 
-        view 
-        marketExists(marketId) 
+    function pauseBetting(uint256 marketId, bool status)
+        external
+        marketExists(marketId)
+        onlyMarketCreator(marketId)
+    {
+        Market storage market = markets[marketId];
+        market.bettingPaused = status;
+        emit BettingPaused(marketId, status);
+    }
+
+    function updateDeadline(uint256 marketId, uint256 additionalTime)
+        external
+        marketExists(marketId)
+        onlyMarketCreator(marketId)
+    {
+        Market storage market = markets[marketId];
+        require(!market.resolved && !market.cancelled, "Already ended");
+        require(block.timestamp < market.deadline, "Already expired");
+        require(additionalTime > 0, "Invalid extension");
+
+        market.deadline += additionalTime;
+        emit DeadlineUpdated(marketId, market.deadline);
+    }
+
+    function getUserWinnings(uint256 marketId, address user)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256)
+    {
+        Market storage market = markets[marketId];
+        if (!market.resolved || market.cancelled) return 0;
+
+        uint256 bet = market.userBets[user][market.winningOption];
+        if (bet == 0) return 0;
+
+        uint256 winningPool = market.optionPools[market.winningOption];
+        uint256 poolToDistribute = market.totalPool - ((market.totalPool * PLATFORM_FEE) / 100);
+        return (bet * poolToDistribute) / winningPool;
+    }
+
+    function getUserHistory(address user) external view returns (uint256[] memory) {
+        return userHistory[user];
+    }
+
+    function getMarketDetails(uint256 marketId)
+        external
+        view
+        marketExists(marketId)
         returns (
             string memory question,
             string[] memory options,
@@ -203,8 +264,12 @@ contract Project {
             uint256 winningOption,
             address creator,
             uint256 totalPool,
-            bool cancelled
-        ) 
+            string memory category,
+            bool cancelled,
+            bool bettingPaused,
+            uint256 minBet,
+            uint256 maxBet
+        )
     {
         Market storage market = markets[marketId];
         return (
@@ -215,114 +280,11 @@ contract Project {
             market.winningOption,
             market.creator,
             market.totalPool,
-            market.cancelled
+            market.category,
+            market.cancelled,
+            market.bettingPaused,
+            market.minBet,
+            market.maxBet
         );
-    }
-
-    function getUserBet(uint256 marketId, address user, uint256 optionIndex) 
-        external 
-        view 
-        marketExists(marketId) 
-        returns (uint256) 
-    {
-        return markets[marketId].userBets[user][optionIndex];
-    }
-
-    function getOptionPool(uint256 marketId, uint256 optionIndex) 
-        external 
-        view 
-        marketExists(marketId) 
-        returns (uint256) 
-    {
-        return markets[marketId].optionPools[optionIndex];
-    }
-
-    function getTotalUserBet(uint256 marketId, address user)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256 totalBet)
-    {
-        Market storage market = markets[marketId];
-        uint256 optionsLength = market.options.length;
-        for (uint256 i = 0; i < optionsLength; i++) {
-            totalBet += market.userBets[user][i];
-        }
-    }
-
-    function getAllUserBets(uint256 marketId, address user)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256[] memory optionIndexes, uint256[] memory betAmounts)
-    {
-        Market storage market = markets[marketId];
-        uint256 optionsLength = market.options.length;
-
-        optionIndexes = new uint256[](optionsLength);
-        betAmounts = new uint256[](optionsLength);
-
-        for (uint256 i = 0; i < optionsLength; i++) {
-            optionIndexes[i] = i;
-            betAmounts[i] = market.userBets[user][i];
-        }
-    }
-
-    function getWinningOptionPool(uint256 marketId) 
-        external 
-        view 
-        marketExists(marketId) 
-        returns (uint256) 
-    {
-        Market storage market = markets[marketId];
-        require(market.resolved, "Market not resolved yet");
-        return market.optionPools[market.winningOption];
-    }
-
-    function getAllMarkets() external view returns (uint256[] memory) {
-        uint256[] memory allMarkets = new uint256[](marketCount);
-        for (uint256 i = 0; i < marketCount; i++) {
-            allMarkets[i] = i;
-        }
-        return allMarkets;
-    }
-
-    function updateDeadline(uint256 marketId, uint256 additionalTime)
-        external
-        marketExists(marketId)
-        onlyMarketCreator(marketId)
-    {
-        Market storage market = markets[marketId];
-        require(!market.resolved, "Market already resolved");
-        require(!market.cancelled, "Market is cancelled");
-        require(block.timestamp < market.deadline, "Market already expired");
-        require(additionalTime > 0, "Time must be greater than 0");
-
-        market.deadline += additionalTime;
-        emit DeadlineUpdated(marketId, market.deadline);
-    }
-
-    // ✅ New Function: Check User Potential Winnings
-    function getUserWinnings(uint256 marketId, address user)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256)
-    {
-        Market storage market = markets[marketId];
-        require(market.resolved, "Market not resolved yet");
-        require(!market.cancelled, "Market was cancelled");
-
-        uint256 userBet = market.userBets[user][market.winningOption];
-        if (userBet == 0) return 0;
-
-        uint256 winningPool = market.optionPools[market.winningOption];
-        if (winningPool == 0) return 0;
-
-        uint256 platformFeeAmount = (market.totalPool * PLATFORM_FEE) / 100;
-        uint256 distributionPool = market.totalPool - platformFeeAmount;
-        uint256 winnings = (userBet * distributionPool) / winningPool;
-
-        return winnings;
     }
 }
