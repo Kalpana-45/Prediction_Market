@@ -26,15 +26,7 @@ contract Project {
     mapping(uint256 => Market) public markets;
     mapping(address => uint256[]) public userHistory;
 
-    event MarketCreated(
-        uint256 indexed marketId,
-        string question,
-        string[] options,
-        uint256 deadline,
-        address creator,
-        string category
-    );
-
+    event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
     event BetPlaced(uint256 indexed marketId, address indexed user, uint256 optionIndex, uint256 amount);
     event MarketResolved(uint256 indexed marketId, uint256 winningOption, uint256 totalPool);
     event WinningsWithdrawn(uint256 indexed marketId, address indexed user, uint256 amount);
@@ -286,5 +278,13 @@ contract Project {
             market.minBet,
             market.maxBet
         );
+    }
+
+    // ✅ New Function: Get total amount user bet in a market
+    function getTotalBetsByUser(uint256 marketId, address user) external view marketExists(marketId) returns (uint256 total) {
+        Market storage market = markets[marketId];
+        for (uint256 i = 0; i < market.options.length; i++) {
+            total += market.userBets[user][i];
+        }
     }
 }
