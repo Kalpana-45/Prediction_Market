@@ -280,11 +280,33 @@ contract Project {
         );
     }
 
-    // ✅ New Function: Get total amount user bet in a market
-    function getTotalBetsByUser(uint256 marketId, address user) external view marketExists(marketId) returns (uint256 total) {
+    // ✅ Existing Function: Get total amount user bet in a market
+    function getTotalBetsByUser(uint256 marketId, address user)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256 total)
+    {
         Market storage market = markets[marketId];
         for (uint256 i = 0; i < market.options.length; i++) {
             total += market.userBets[user][i];
         }
+    }
+
+    // ✅ NEW FUNCTION: Get how much ETH is bet on each option
+    function getOptionPoolDistribution(uint256 marketId)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256[] memory)
+    {
+        Market storage market = markets[marketId];
+        uint256[] memory poolDistribution = new uint256[](market.options.length);
+
+        for (uint256 i = 0; i < market.options.length; i++) {
+            poolDistribution[i] = market.optionPools[i];
+        }
+
+        return poolDistribution;
     }
 }
