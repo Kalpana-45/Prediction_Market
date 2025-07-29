@@ -280,7 +280,6 @@ contract Project {
         );
     }
 
-    // ✅ Existing Function: Get total amount user bet in a market
     function getTotalBetsByUser(uint256 marketId, address user)
         external
         view
@@ -293,7 +292,6 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get how much ETH is bet on each option
     function getOptionPoolDistribution(uint256 marketId)
         external
         view
@@ -308,5 +306,29 @@ contract Project {
         }
 
         return poolDistribution;
+    }
+
+    // ✅ NEW FUNCTION: Get all basic market info
+    function getAllMarkets() external view returns (
+        uint256[] memory ids,
+        string[] memory questions,
+        string[] memory categories,
+        uint256[] memory deadlines,
+        bool[] memory resolvedList
+    ) {
+        ids = new uint256[](marketCount);
+        questions = new string[](marketCount);
+        categories = new string[](marketCount);
+        deadlines = new uint256[](marketCount);
+        resolvedList = new bool[](marketCount);
+
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            ids[i] = i;
+            questions[i] = market.question;
+            categories[i] = market.category;
+            deadlines[i] = market.deadline;
+            resolvedList[i] = market.resolved;
+        }
     }
 }
