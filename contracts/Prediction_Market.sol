@@ -26,6 +26,11 @@ contract Project {
     mapping(uint256 => Market) public markets;
     mapping(address => uint256[]) public userHistory;
 
+    // 🆕 Leaderboard tracking
+    mapping(address => uint256) public totalWinnings;
+    mapping(address => uint256) public totalWins;
+    address[] public allUsers;
+
     event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
     event BetPlaced(uint256 indexed marketId, address indexed user, uint256 optionIndex, uint256 amount);
     event MarketResolved(uint256 indexed marketId, uint256 winningOption, uint256 totalPool);
@@ -102,11 +107,14 @@ contract Project {
         require(msg.value <= market.maxBet, "Bet exceeds maximum limit");
         require(optionIndex < market.options.length, "Invalid option");
 
+        if (market.userBets[msg.sender][optionIndex] == 0) {
+            userHistory[msg.sender].push(marketId);
+            allUsers.push(msg.sender); // 🆕 Save user for leaderboard
+        }
+
         market.userBets[msg.sender][optionIndex] += msg.value;
         market.optionPools[optionIndex] += msg.value;
         market.totalPool += msg.value;
-
-        userHistory[msg.sender].push(marketId);
 
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
@@ -159,6 +167,10 @@ contract Project {
 
         market.userBets[msg.sender][market.winningOption] = 0;
         payable(msg.sender).transfer(userShare);
+
+        // 🆕 Update leaderboard
+        totalWinnings[msg.sender] += userShare;
+        totalWins[msg.sender] += 1;
 
         emit WinningsWithdrawn(marketId, msg.sender, userShare);
     }
@@ -308,7 +320,6 @@ contract Project {
         return poolDistribution;
     }
 
-    // ✅ NEW FUNCTION: Get all basic market info
     function getAllMarkets() external view returns (
         uint256[] memory ids,
         string[] memory questions,
@@ -329,6 +340,41 @@ contract Project {
             categories[i] = market.category;
             deadlines[i] = market.deadline;
             resolvedList[i] = market.resolved;
+        }
+    }
+
+    // 🆕 Get top users from leaderboard
+    function getLeaderboard(uint256 topN)
+        external
+        view
+        returns (address[] memory users, uint256[] memory winnings, uint256[] memory wins)
+    {
+        require(topN > 0, "Invalid number");
+
+        users = new address[](topN);
+        winnings = new uint256[](topN);
+        wins = new uint256[](topN);
+
+        // Naive sorting (can be improved)
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            address user = allUsers[i];
+            uint256 userWinnings = totalWinnings[user];
+
+            for (uint256 j = 0; j < topN; j++) {
+                if (userWinnings > winnings[j]) {
+                    // Shift entries down
+                    for (uint256 k = topN - 1; k > j; k--) {
+                        users[k] = users[k - 1];
+                        winnings[k] = winnings[k - 1];
+                        wins[k] = wins[k - 1];
+                    }
+
+                    users[j] = user;
+                    winnings[j] = userWinnings;
+                    wins[j] = totalWins[user];
+                    break;
+                }
+            }
         }
     }
 }
