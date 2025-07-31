@@ -19,6 +19,12 @@ contract Project {
         mapping(address => mapping(uint256 => uint256)) userBets;
     }
 
+    struct Comment {
+        address user;
+        string text;
+        uint256 timestamp;
+    }
+
     address public admin;
     uint256 public marketCount;
     uint256 public constant PLATFORM_FEE = 2;
@@ -31,6 +37,9 @@ contract Project {
     mapping(address => uint256) public totalWins;
     address[] public allUsers;
 
+    // 🆕 Comments
+    mapping(uint256 => Comment[]) public marketComments;
+
     event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
     event BetPlaced(uint256 indexed marketId, address indexed user, uint256 optionIndex, uint256 amount);
     event MarketResolved(uint256 indexed marketId, uint256 winningOption, uint256 totalPool);
@@ -38,6 +47,7 @@ contract Project {
     event MarketCancelled(uint256 indexed marketId);
     event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline);
     event BettingPaused(uint256 indexed marketId, bool status);
+    event CommentAdded(uint256 indexed marketId, address indexed user, string comment, uint256 timestamp);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin can perform this action");
@@ -355,14 +365,12 @@ contract Project {
         winnings = new uint256[](topN);
         wins = new uint256[](topN);
 
-        // Naive sorting (can be improved)
         for (uint256 i = 0; i < allUsers.length; i++) {
             address user = allUsers[i];
             uint256 userWinnings = totalWinnings[user];
 
             for (uint256 j = 0; j < topN; j++) {
                 if (userWinnings > winnings[j]) {
-                    // Shift entries down
                     for (uint256 k = topN - 1; k > j; k--) {
                         users[k] = users[k - 1];
                         winnings[k] = winnings[k - 1];
@@ -376,5 +384,25 @@ contract Project {
                 }
             }
         }
+    }
+
+    // 🆕 Add comment
+    function addComment(uint256 marketId, string calldata commentText)
+        external
+        marketExists(marketId)
+    {
+        require(bytes(commentText).length > 0, "Empty comment");
+        marketComments[marketId].push(Comment(msg.sender, commentText, block.timestamp));
+        emit CommentAdded(marketId, msg.sender, commentText, block.timestamp);
+    }
+
+    // 🆕 Get all comments for a market
+    function getComments(uint256 marketId)
+        external
+        view
+        marketExists(marketId)
+        returns (Comment[] memory)
+    {
+        return marketComments[marketId];
     }
 }
