@@ -32,12 +32,10 @@ contract Project {
     mapping(uint256 => Market) public markets;
     mapping(address => uint256[]) public userHistory;
 
-    // 🆕 Leaderboard tracking
     mapping(address => uint256) public totalWinnings;
     mapping(address => uint256) public totalWins;
     address[] public allUsers;
 
-    // 🆕 Comments
     mapping(uint256 => Comment[]) public marketComments;
 
     event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
@@ -119,7 +117,7 @@ contract Project {
 
         if (market.userBets[msg.sender][optionIndex] == 0) {
             userHistory[msg.sender].push(marketId);
-            allUsers.push(msg.sender); // 🆕 Save user for leaderboard
+            allUsers.push(msg.sender);
         }
 
         market.userBets[msg.sender][optionIndex] += msg.value;
@@ -178,7 +176,6 @@ contract Project {
         market.userBets[msg.sender][market.winningOption] = 0;
         payable(msg.sender).transfer(userShare);
 
-        // 🆕 Update leaderboard
         totalWinnings[msg.sender] += userShare;
         totalWins[msg.sender] += 1;
 
@@ -226,8 +223,7 @@ contract Project {
         marketExists(marketId)
         onlyMarketCreator(marketId)
     {
-        Market storage market = markets[marketId];
-        market.bettingPaused = status;
+        markets[marketId].bettingPaused = status;
         emit BettingPaused(marketId, status);
     }
 
@@ -271,18 +267,18 @@ contract Project {
         view
         marketExists(marketId)
         returns (
-            string memory question,
-            string[] memory options,
-            uint256 deadline,
-            bool resolved,
-            uint256 winningOption,
-            address creator,
-            uint256 totalPool,
-            string memory category,
-            bool cancelled,
-            bool bettingPaused,
-            uint256 minBet,
-            uint256 maxBet
+            string memory,
+            string[] memory,
+            uint256,
+            bool,
+            uint256,
+            address,
+            uint256,
+            string memory,
+            bool,
+            bool,
+            uint256,
+            uint256
         )
     {
         Market storage market = markets[marketId];
@@ -322,11 +318,9 @@ contract Project {
     {
         Market storage market = markets[marketId];
         uint256[] memory poolDistribution = new uint256[](market.options.length);
-
         for (uint256 i = 0; i < market.options.length; i++) {
             poolDistribution[i] = market.optionPools[i];
         }
-
         return poolDistribution;
     }
 
@@ -353,7 +347,6 @@ contract Project {
         }
     }
 
-    // 🆕 Get top users from leaderboard
     function getLeaderboard(uint256 topN)
         external
         view
@@ -376,7 +369,6 @@ contract Project {
                         winnings[k] = winnings[k - 1];
                         wins[k] = wins[k - 1];
                     }
-
                     users[j] = user;
                     winnings[j] = userWinnings;
                     wins[j] = totalWins[user];
@@ -386,7 +378,6 @@ contract Project {
         }
     }
 
-    // 🆕 Add comment
     function addComment(uint256 marketId, string calldata commentText)
         external
         marketExists(marketId)
@@ -396,7 +387,6 @@ contract Project {
         emit CommentAdded(marketId, msg.sender, commentText, block.timestamp);
     }
 
-    // 🆕 Get all comments for a market
     function getComments(uint256 marketId)
         external
         view
@@ -404,5 +394,38 @@ contract Project {
         returns (Comment[] memory)
     {
         return marketComments[marketId];
+    }
+
+    // 🔥 NEW FUNCTION: Get all active and open markets
+    function getActiveMarkets() external view returns (uint256[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            if (
+                !market.resolved &&
+                !market.cancelled &&
+                block.timestamp < market.deadline &&
+                !market.bettingPaused
+            ) {
+                count++;
+            }
+        }
+
+        uint256[] memory activeMarketIds = new uint256[](count);
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            if (
+                !market.resolved &&
+                !market.cancelled &&
+                block.timestamp < market.deadline &&
+                !market.bettingPaused
+            ) {
+                activeMarketIds[index++] = i;
+            }
+        }
+
+        return activeMarketIds;
     }
 }
