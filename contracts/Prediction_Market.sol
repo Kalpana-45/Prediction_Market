@@ -17,6 +17,7 @@ contract Project {
         uint256 maxBet;
         mapping(uint256 => uint256) optionPools;
         mapping(address => mapping(uint256 => uint256)) userBets;
+        mapping(address => bool) participants; // ✅ New: track unique participants
     }
 
     struct Comment {
@@ -123,6 +124,7 @@ contract Project {
         market.userBets[msg.sender][optionIndex] += msg.value;
         market.optionPools[optionIndex] += msg.value;
         market.totalPool += msg.value;
+        market.participants[msg.sender] = true; // ✅ track participant
 
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
@@ -396,7 +398,7 @@ contract Project {
         return marketComments[marketId];
     }
 
-    // 🔥 NEW FUNCTION: Get all active and open markets
+    // ✅ NEW FUNCTION: Get all active and open markets
     function getActiveMarkets() external view returns (uint256[] memory) {
         uint256 count = 0;
         for (uint256 i = 0; i < marketCount; i++) {
@@ -428,4 +430,106 @@ contract Project {
 
         return activeMarketIds;
     }
+
+    // ✅ NEW FUNCTION: Get user's active bets
+    function getUserActiveBets(address user) 
+        external 
+        view 
+        returns (uint256[] memory marketIds, uint256[] memory optionIndexes, uint256[] memory betAmounts) 
+    {
+        uint256 count = 0;
+
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            if (!market.resolved && !market.cancelled && block.timestamp < market.deadline) {
+                for (uint256 j = 0; j < market.options.length; j++) {
+                    if (market.userBets[user][j] > 0) {
+                        count++;
+                    }
+                }
+            }
+        }
+
+        marketIds = new uint256[](count);
+        optionIndexes = new uint256[](count);
+        betAmounts = new uint256[](count);
+
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            if (!market.resolved && !market.cancelled && block.timestamp < market.deadline) {
+                for (uint256 j = 0; j < market.options.length; j++) {
+                    uint256 bet = market.userBets[user][j];
+                    if (bet > 0) {
+                        marketIds[index] = i;
+                        optionIndexes[index] = j;
+                        betAmounts[index] = bet;
+                        index++;
+                    }
+                }
+            }
+        }
+    }
+
+    // ✅ NEW FUNCTION: Get all cancelled markets
+    function getCancelledMarkets() external view returns (uint256[] memory cancelledIds) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].cancelled) {
+                count++;
+            }
+        }
+        cancelledIds = new uint256[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].cancelled) {
+                cancelledIds[index++] = i;
+            }
+        }
+    }
+
+    // ✅ NEW FUNCTION: Get all resolved markets
+    function getResolvedMarkets() external view returns (uint256[] memory resolvedIds) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].resolved) {
+                count++;
+            }
+        }
+        resolvedIds = new uint256[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].resolved) {
+                resolvedIds[index++] = i;
+            }
+        }
+    }
+
+    // ✅ NEW FUNCTION: Get all participants of a market
+    function getMarketParticipants(uint256 marketId) 
+        external 
+        view 
+        marketExists(marketId) 
+        returns (address[] memory participantsList) 
+    {
+        Market storage market = markets[marketId];
+        uint256 count = 0;
+
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            if (market.participants[allUsers[i]]) {
+                count++;
+            }
+        }
+
+        participantsList = new address[](count);
+        uint256 index = 0;
+
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            if (market.participants[allUsers[i]]) {
+                participantsList[index++] = allUsers[i];
+            }
+        }
+    }
 }
+
