@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
@@ -17,7 +18,7 @@ contract Project {
         uint256 maxBet;
         mapping(uint256 => uint256) optionPools;
         mapping(address => mapping(uint256 => uint256)) userBets;
-        mapping(address => bool) participants; // ✅ New: track unique participants
+        mapping(address => bool) participants; // ✅ Track unique participants
     }
 
     struct Comment {
@@ -32,11 +33,9 @@ contract Project {
 
     mapping(uint256 => Market) public markets;
     mapping(address => uint256[]) public userHistory;
-
     mapping(address => uint256) public totalWinnings;
     mapping(address => uint256) public totalWins;
     address[] public allUsers;
-
     mapping(uint256 => Comment[]) public marketComments;
 
     event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
@@ -398,7 +397,7 @@ contract Project {
         return marketComments[marketId];
     }
 
-    // ✅ NEW FUNCTION: Get all active and open markets
+    // ✅ Get all active and open markets
     function getActiveMarkets() external view returns (uint256[] memory) {
         uint256 count = 0;
         for (uint256 i = 0; i < marketCount; i++) {
@@ -431,7 +430,7 @@ contract Project {
         return activeMarketIds;
     }
 
-    // ✅ NEW FUNCTION: Get user's active bets
+    // ✅ Get user's active bets
     function getUserActiveBets(address user) 
         external 
         view 
@@ -472,7 +471,7 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get all cancelled markets
+    // ✅ Get all cancelled markets
     function getCancelledMarkets() external view returns (uint256[] memory cancelledIds) {
         uint256 count = 0;
         for (uint256 i = 0; i < marketCount; i++) {
@@ -489,7 +488,7 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get all resolved markets
+    // ✅ Get all resolved markets
     function getResolvedMarkets() external view returns (uint256[] memory resolvedIds) {
         uint256 count = 0;
         for (uint256 i = 0; i < marketCount; i++) {
@@ -506,7 +505,7 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get all participants of a market
+    // ✅ Get all participants of a market
     function getMarketParticipants(uint256 marketId) 
         external 
         view 
@@ -531,5 +530,32 @@ contract Project {
             }
         }
     }
-}
 
+    // ✅ NEW FUNCTION: Get markets by a specific category
+    function getMarketsByCategory(string memory category)
+        external
+        view
+        returns (uint256[] memory categoryMarketIds)
+    {
+        uint256 count = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (
+                keccak256(bytes(markets[i].category)) ==
+                keccak256(bytes(category))
+            ) {
+                count++;
+            }
+        }
+
+        categoryMarketIds = new uint256[](count);
+        uint256 index = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (
+                keccak256(bytes(markets[i].category)) ==
+                keccak256(bytes(category))
+            ) {
+                categoryMarketIds[index++] = i;
+            }
+        }
+    }
+}
