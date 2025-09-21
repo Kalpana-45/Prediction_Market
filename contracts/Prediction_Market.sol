@@ -1,4 +1,3 @@
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
@@ -38,6 +37,11 @@ contract Project {
     address[] public allUsers;
     mapping(uint256 => Comment[]) public marketComments;
 
+    // Category tracking
+    mapping(string => uint256) public categoryCounts;
+    string[] public allCategories;
+    mapping(string => bool) private categoryExists;
+
     event MarketCreated(uint256 indexed marketId, string question, string[] options, uint256 deadline, address creator, string category);
     event BetPlaced(uint256 indexed marketId, address indexed user, uint256 optionIndex, uint256 amount);
     event MarketResolved(uint256 indexed marketId, uint256 winningOption, uint256 totalPool);
@@ -46,6 +50,7 @@ contract Project {
     event DeadlineUpdated(uint256 indexed marketId, uint256 newDeadline);
     event BettingPaused(uint256 indexed marketId, bool status);
     event CommentAdded(uint256 indexed marketId, address indexed user, string comment, uint256 timestamp);
+    event AdminWithdrawn(address indexed admin, uint256 amount);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Only admin can perform this action");
@@ -99,6 +104,13 @@ contract Project {
         market.maxBet = maxBet;
         market.resolved = false;
         market.cancelled = false;
+
+        // update category metadata
+        if (!categoryExists[category]) {
+            categoryExists[category] = true;
+            allCategories.push(category);
+        }
+        categoryCounts[category] += 1;
 
         emit MarketCreated(marketId, question, options, market.deadline, msg.sender, category);
         return marketId;
@@ -531,7 +543,7 @@ contract Project {
         }
     }
 
-    // ✅ NEW FUNCTION: Get markets by a specific category
+    // ✅ Get markets by a specific category
     function getMarketsByCategory(string memory category)
         external
         view
@@ -558,4 +570,104 @@ contract Project {
             }
         }
     }
+
+    // ---------- NEW UTIL FUNCTIONS ----------
+
+    /// @notice Returns number of unique participants and total pool for a market
+    function getMarketStats(uint256 marketId)
+        external
+        view
+        marketExists(marketId)
+        returns (uint256 participantsCount, uint256 totalPool)
+    {
+        Market storage market = markets[marketId];
+        uint256 count = 0;
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            if (market.participants[allUsers[i]]) {
+                count++;
+            }
+        }
+        participantsCount = count;
+        totalPool = market.totalPool;
+    }
+
+    /// @notice Returns total bet amount by user across all markets, total won (tracked), and marketsJoined (history)
+    function getUserStats(address user)
+        external
+        view
+        returns (uint256 totalBet, uint256 totalWon, uint256 marketsJoined)
+    {
+        // totalBet: sum of bets across all markets/options
+        uint256 sum = 0;
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage market = markets[i];
+            for (uint256 j = 0; j < market.options.length; j++) {
+                sum += market.userBets[user][j];
+            }
+        }
+        totalBet = sum;
+        totalWon = totalWinnings[user];
+        marketsJoined = userHistory[user].length;
+    }
+
+    /// @notice Admin can withdraw the contract's ETH balance (platform fees accumulate here).
+    /// @dev IMPORTANT: this transfers the entire contract balance to admin. Ensure platform fees are the only funds expected here.
+    function adminWithdrawFees() external onlyAdmin {
+        uint256 bal = address(this).balance;
+        require(bal > 0, "No balance to withdraw");
+        payable(admin).transfer(bal);
+        emit AdminWithdrawn(admin, bal);
+    }
+
+    /// @notice Returns top categories by number of markets. If fewer categories exist than topN, returns all.
+    function getTopCategories(uint256 topN)
+        external
+        view
+        returns (string[] memory categories, uint256[] memory counts)
+    {
+        require(topN > 0, "topN must be > 0");
+        uint256 totalCats = allCategories.length;
+        if (totalCats == 0) {
+            categories = new string;
+            counts = new uint256;
+            return (categories, counts);
+        }
+
+        // prepare arrays of size totalCats
+        string[] memory catArr = new string[](totalCats);
+        uint256[] memory cntArr = new uint256[](totalCats);
+
+        for (uint256 i = 0; i < totalCats; i++) {
+            catArr[i] = allCategories[i];
+            cntArr[i] = categoryCounts[allCategories[i]];
+        }
+
+        // We will build topN lists
+        uint256 resultSize = topN <= totalCats ? topN : totalCats;
+        categories = new string[](resultSize);
+        counts = new uint256[](resultSize);
+
+        for (uint256 r = 0; r < resultSize; r++) {
+            // find max index in cntArr
+            uint256 maxIdx = r;
+            for (uint256 k = r; k < totalCats; k++) {
+                if (cntArr[k] > cntArr[maxIdx]) {
+                    maxIdx = k;
+                }
+            }
+            // swap r and maxIdx
+            if (maxIdx != r) {
+                string memory tmpS = catArr[r];
+                catArr[r] = catArr[maxIdx];
+                catArr[maxIdx] = tmpS;
+
+                uint256 tmpN = cntArr[r];
+                cntArr[r] = cntArr[maxIdx];
+                cntArr[maxIdx] = tmpN;
+            }
+            categories[r] = catArr[r];
+            counts[r] = cntArr[r];
+        }
+    }
 }
+
