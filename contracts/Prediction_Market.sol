@@ -17,7 +17,7 @@ contract Project {
         uint256 maxBet;
         mapping(uint256 => uint256) optionPools;
         mapping(address => mapping(uint256 => uint256)) userBets;
-        mapping(address => bool) participants; // ✅ Track unique participants
+        mapping(address => bool) participants;
     }
 
     struct Comment {
@@ -37,7 +37,6 @@ contract Project {
     address[] public allUsers;
     mapping(uint256 => Comment[]) public marketComments;
 
-    // Category tracking
     mapping(string => uint256) public categoryCounts;
     string[] public allCategories;
     mapping(string => bool) private categoryExists;
@@ -51,9 +50,10 @@ contract Project {
     event BettingPaused(uint256 indexed marketId, bool status);
     event CommentAdded(uint256 indexed marketId, address indexed user, string comment, uint256 timestamp);
     event AdminWithdrawn(address indexed admin, uint256 amount);
+    event AdminUpdated(address oldAdmin, address newAdmin);
 
     modifier onlyAdmin() {
-        require(msg.sender == admin, "Only admin can perform this action");
+        require(msg.sender == admin, "Only admin");
         _;
     }
 
@@ -63,16 +63,16 @@ contract Project {
     }
 
     modifier marketActive(uint256 marketId) {
-        Market storage market = markets[marketId];
-        require(block.timestamp < market.deadline, "Market expired");
-        require(!market.resolved, "Market already resolved");
-        require(!market.cancelled, "Market is cancelled");
-        require(!market.bettingPaused, "Betting is paused");
+        Market storage m = markets[marketId];
+        require(block.timestamp < m.deadline, "Expired");
+        require(!m.resolved, "Resolved");
+        require(!m.cancelled, "Cancelled");
+        require(!m.bettingPaused, "Paused");
         _;
     }
 
     modifier onlyMarketCreator(uint256 marketId) {
-        require(msg.sender == markets[marketId].creator, "Only market creator allowed");
+        require(msg.sender == markets[marketId].creator, "Not creator");
         _;
     }
 
@@ -80,6 +80,7 @@ contract Project {
         admin = msg.sender;
     }
 
+    // ------------------ CORE LOGIC ------------------
     function createMarket(
         string memory question,
         string[] memory options,
@@ -88,31 +89,28 @@ contract Project {
         uint256 minBet,
         uint256 maxBet
     ) external returns (uint256) {
-        require(options.length >= 2, "Need at least 2 options");
-        require(duration > 0, "Duration must be greater than zero");
-        require(bytes(question).length > 0, "Question is required");
+        require(options.length >= 2, "Need >=2 options");
+        require(duration > 0, "Invalid duration");
+        require(bytes(question).length > 0, "Empty question");
 
         uint256 marketId = marketCount++;
-        Market storage market = markets[marketId];
+        Market storage m = markets[marketId];
 
-        market.question = question;
-        market.options = options;
-        market.deadline = block.timestamp + duration;
-        market.creator = msg.sender;
-        market.category = category;
-        market.minBet = minBet;
-        market.maxBet = maxBet;
-        market.resolved = false;
-        market.cancelled = false;
+        m.question = question;
+        m.options = options;
+        m.deadline = block.timestamp + duration;
+        m.creator = msg.sender;
+        m.category = category;
+        m.minBet = minBet;
+        m.maxBet = maxBet;
 
-        // update category metadata
         if (!categoryExists[category]) {
             categoryExists[category] = true;
             allCategories.push(category);
         }
-        categoryCounts[category] += 1;
+        categoryCounts[category]++;
 
-        emit MarketCreated(marketId, question, options, market.deadline, msg.sender, category);
+        emit MarketCreated(marketId, question, options, m.deadline, msg.sender, category);
         return marketId;
     }
 
@@ -122,20 +120,19 @@ contract Project {
         marketExists(marketId)
         marketActive(marketId)
     {
-        Market storage market = markets[marketId];
-        require(msg.value >= market.minBet, "Bet below minimum limit");
-        require(msg.value <= market.maxBet, "Bet exceeds maximum limit");
-        require(optionIndex < market.options.length, "Invalid option");
+        Market storage m = markets[marketId];
+        require(optionIndex < m.options.length, "Invalid option");
+        require(msg.value >= m.minBet, "Below min");
+        require(msg.value <= m.maxBet, "Above max");
 
-        if (market.userBets[msg.sender][optionIndex] == 0) {
+        if (m.userBets[msg.sender][optionIndex] == 0) {
             userHistory[msg.sender].push(marketId);
             allUsers.push(msg.sender);
         }
-
-        market.userBets[msg.sender][optionIndex] += msg.value;
-        market.optionPools[optionIndex] += msg.value;
-        market.totalPool += msg.value;
-        market.participants[msg.sender] = true; // ✅ track participant
+        m.userBets[msg.sender][optionIndex] += msg.value;
+        m.optionPools[optionIndex] += msg.value;
+        m.totalPool += msg.value;
+        m.participants[msg.sender] = true;
 
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
@@ -145,16 +142,14 @@ contract Project {
         marketExists(marketId)
         onlyMarketCreator(marketId)
     {
-        Market storage market = markets[marketId];
-        require(!market.resolved, "Already resolved");
-        require(!market.cancelled, "Market cancelled");
-        require(block.timestamp >= market.deadline, "Market not yet expired");
-        require(winningOption < market.options.length, "Invalid option");
+        Market storage m = markets[marketId];
+        require(!m.resolved && !m.cancelled, "Ended");
+        require(block.timestamp >= m.deadline, "Not expired");
+        require(winningOption < m.options.length, "Invalid");
 
-        market.resolved = true;
-        market.winningOption = winningOption;
-
-        emit MarketResolved(marketId, winningOption, market.totalPool);
+        m.resolved = true;
+        m.winningOption = winningOption;
+        emit MarketResolved(marketId, winningOption, m.totalPool);
     }
 
     function emergencyResolveMarket(uint256 marketId, uint256 winningOption)
@@ -162,58 +157,53 @@ contract Project {
         onlyAdmin
         marketExists(marketId)
     {
-        Market storage market = markets[marketId];
-        require(!market.resolved, "Already resolved");
-        require(!market.cancelled, "Market cancelled");
-        require(winningOption < market.options.length, "Invalid option");
+        Market storage m = markets[marketId];
+        require(!m.resolved && !m.cancelled, "Ended");
+        require(winningOption < m.options.length, "Invalid");
 
-        market.resolved = true;
-        market.winningOption = winningOption;
-
-        emit MarketResolved(marketId, winningOption, market.totalPool);
+        m.resolved = true;
+        m.winningOption = winningOption;
+        emit MarketResolved(marketId, winningOption, m.totalPool);
     }
 
     function withdrawWinnings(uint256 marketId) external marketExists(marketId) {
-        Market storage market = markets[marketId];
-        require(market.resolved, "Market not resolved");
-        require(!market.cancelled, "Market was cancelled");
+        Market storage m = markets[marketId];
+        require(m.resolved && !m.cancelled, "Not resolved");
 
-        uint256 betAmount = market.userBets[msg.sender][market.winningOption];
-        require(betAmount > 0, "No winnings to withdraw");
+        uint256 bet = m.userBets[msg.sender][m.winningOption];
+        require(bet > 0, "No winnings");
 
-        uint256 platformFee = (market.totalPool * PLATFORM_FEE) / 100;
-        uint256 poolToDistribute = market.totalPool - platformFee;
-        uint256 winningPool = market.optionPools[market.winningOption];
-        uint256 userShare = (betAmount * poolToDistribute) / winningPool;
+        uint256 platformFee = (m.totalPool * PLATFORM_FEE) / 100;
+        uint256 poolToDistribute = m.totalPool - platformFee;
+        uint256 winningPool = m.optionPools[m.winningOption];
+        uint256 share = (bet * poolToDistribute) / winningPool;
 
-        market.userBets[msg.sender][market.winningOption] = 0;
-        payable(msg.sender).transfer(userShare);
+        m.userBets[msg.sender][m.winningOption] = 0;
+        payable(msg.sender).transfer(share);
 
-        totalWinnings[msg.sender] += userShare;
+        totalWinnings[msg.sender] += share;
         totalWins[msg.sender] += 1;
 
-        emit WinningsWithdrawn(marketId, msg.sender, userShare);
+        emit WinningsWithdrawn(marketId, msg.sender, share);
     }
 
     function refundUnresolved(uint256 marketId) external marketExists(marketId) {
-        Market storage market = markets[marketId];
-        require(block.timestamp >= market.deadline, "Still active");
-        require(!market.resolved && !market.cancelled, "Not eligible for refund");
+        Market storage m = markets[marketId];
+        require(block.timestamp >= m.deadline, "Still active");
+        require(!m.resolved && !m.cancelled, "Not refundable");
 
-        uint256 refundAmount;
-
-        for (uint256 i = 0; i < market.options.length; i++) {
-            uint256 bet = market.userBets[msg.sender][i];
-            if (bet > 0) {
-                refundAmount += bet;
-                market.userBets[msg.sender][i] = 0;
-                market.optionPools[i] -= bet;
-                market.totalPool -= bet;
+        uint256 refund;
+        for (uint256 i = 0; i < m.options.length; i++) {
+            uint256 b = m.userBets[msg.sender][i];
+            if (b > 0) {
+                refund += b;
+                m.userBets[msg.sender][i] = 0;
+                m.optionPools[i] -= b;
+                m.totalPool -= b;
             }
         }
-
-        require(refundAmount > 0, "No bets found");
-        payable(msg.sender).transfer(refundAmount);
+        require(refund > 0, "No bets");
+        payable(msg.sender).transfer(refund);
     }
 
     function cancelMarket(uint256 marketId)
@@ -221,13 +211,12 @@ contract Project {
         marketExists(marketId)
         onlyMarketCreator(marketId)
     {
-        Market storage market = markets[marketId];
-        require(!market.resolved, "Already resolved");
-        require(!market.cancelled, "Already cancelled");
-        require(block.timestamp < market.deadline, "Already expired");
-        require(market.totalPool == 0, "Bets already placed");
+        Market storage m = markets[marketId];
+        require(!m.resolved && !m.cancelled, "Ended");
+        require(block.timestamp < m.deadline, "Expired");
+        require(m.totalPool == 0, "Bets placed");
 
-        market.cancelled = true;
+        m.cancelled = true;
         emit MarketCancelled(marketId);
     }
 
@@ -245,430 +234,183 @@ contract Project {
         marketExists(marketId)
         onlyMarketCreator(marketId)
     {
-        Market storage market = markets[marketId];
-        require(!market.resolved && !market.cancelled, "Already ended");
-        require(block.timestamp < market.deadline, "Already expired");
-        require(additionalTime > 0, "Invalid extension");
-
-        market.deadline += additionalTime;
-        emit DeadlineUpdated(marketId, market.deadline);
+        Market storage m = markets[marketId];
+        require(!m.resolved && !m.cancelled, "Ended");
+        require(block.timestamp < m.deadline, "Expired");
+        require(additionalTime > 0, "Invalid");
+        m.deadline += additionalTime;
+        emit DeadlineUpdated(marketId, m.deadline);
     }
 
-    function getUserWinnings(uint256 marketId, address user)
+    // ------------------ NEW ANALYTICS FUNCTIONS ------------------
+
+    /// Platform-wide stats
+    function getPlatformStats()
         external
         view
-        marketExists(marketId)
-        returns (uint256)
-    {
-        Market storage market = markets[marketId];
-        if (!market.resolved || market.cancelled) return 0;
-
-        uint256 bet = market.userBets[user][market.winningOption];
-        if (bet == 0) return 0;
-
-        uint256 winningPool = market.optionPools[market.winningOption];
-        uint256 poolToDistribute = market.totalPool - ((market.totalPool * PLATFORM_FEE) / 100);
-        return (bet * poolToDistribute) / winningPool;
-    }
-
-    function getUserHistory(address user) external view returns (uint256[] memory) {
-        return userHistory[user];
-    }
-
-    function getMarketDetails(uint256 marketId)
-        external
-        view
-        marketExists(marketId)
         returns (
-            string memory,
-            string[] memory,
-            uint256,
-            bool,
-            uint256,
-            address,
-            uint256,
-            string memory,
-            bool,
-            bool,
-            uint256,
-            uint256
+            uint256 totalMarkets,
+            uint256 totalUsersCount,
+            uint256 totalCategoriesCount,
+            uint256 totalVolume
         )
     {
-        Market storage market = markets[marketId];
-        return (
-            market.question,
-            market.options,
-            market.deadline,
-            market.resolved,
-            market.winningOption,
-            market.creator,
-            market.totalPool,
-            market.category,
-            market.cancelled,
-            market.bettingPaused,
-            market.minBet,
-            market.maxBet
-        );
-    }
+        totalMarkets = marketCount;
+        totalUsersCount = allUsers.length;
+        totalCategoriesCount = allCategories.length;
 
-    function getTotalBetsByUser(uint256 marketId, address user)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256 total)
-    {
-        Market storage market = markets[marketId];
-        for (uint256 i = 0; i < market.options.length; i++) {
-            total += market.userBets[user][i];
-        }
-    }
-
-    function getOptionPoolDistribution(uint256 marketId)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256[] memory)
-    {
-        Market storage market = markets[marketId];
-        uint256[] memory poolDistribution = new uint256[](market.options.length);
-        for (uint256 i = 0; i < market.options.length; i++) {
-            poolDistribution[i] = market.optionPools[i];
-        }
-        return poolDistribution;
-    }
-
-    function getAllMarkets() external view returns (
-        uint256[] memory ids,
-        string[] memory questions,
-        string[] memory categories,
-        uint256[] memory deadlines,
-        bool[] memory resolvedList
-    ) {
-        ids = new uint256[](marketCount);
-        questions = new string[](marketCount);
-        categories = new string[](marketCount);
-        deadlines = new uint256[](marketCount);
-        resolvedList = new bool[](marketCount);
-
+        uint256 volume;
         for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            ids[i] = i;
-            questions[i] = market.question;
-            categories[i] = market.category;
-            deadlines[i] = market.deadline;
-            resolvedList[i] = market.resolved;
+            volume += markets[i].totalPool;
+        }
+        totalVolume = volume;
+    }
+
+    /// Largest pool market
+    function getLargestMarket()
+        external
+        view
+        returns (uint256 marketId, uint256 poolSize)
+    {
+        uint256 maxPool;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].totalPool > maxPool) {
+                maxPool = markets[i].totalPool;
+                marketId = i;
+            }
+        }
+        poolSize = maxPool;
+    }
+
+    /// Latest N markets (most recent)
+    function getLatestMarkets(uint256 n) external view returns (uint256[] memory ids) {
+        if (n > marketCount) n = marketCount;
+        ids = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            ids[i] = marketCount - 1 - i;
         }
     }
 
-    function getLeaderboard(uint256 topN)
+    /// Markets by creator
+    function getMarketsByCreator(address creator)
         external
         view
-        returns (address[] memory users, uint256[] memory winnings, uint256[] memory wins)
+        returns (uint256[] memory creatorMarkets)
     {
-        require(topN > 0, "Invalid number");
+        uint256 count;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].creator == creator) count++;
+        }
+        creatorMarkets = new uint256[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].creator == creator) creatorMarkets[idx++] = i;
+        }
+    }
 
-        users = new address[](topN);
-        winnings = new uint256[](topN);
-        wins = new uint256[](topN);
+    /// Resolved markets where user participated
+    function getUserResolvedMarkets(address user)
+        external
+        view
+        returns (uint256[] memory ids)
+    {
+        uint256 count;
+        for (uint256 i = 0; i < userHistory[user].length; i++) {
+            uint256 mId = userHistory[user][i];
+            if (markets[mId].resolved) count++;
+        }
+        ids = new uint256[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < userHistory[user].length; i++) {
+            uint256 mId = userHistory[user][i];
+            if (markets[mId].resolved) ids[idx++] = mId;
+        }
+    }
 
-        for (uint256 i = 0; i < allUsers.length; i++) {
-            address user = allUsers[i];
-            uint256 userWinnings = totalWinnings[user];
-
-            for (uint256 j = 0; j < topN; j++) {
-                if (userWinnings > winnings[j]) {
-                    for (uint256 k = topN - 1; k > j; k--) {
-                        users[k] = users[k - 1];
-                        winnings[k] = winnings[k - 1];
-                        wins[k] = wins[k - 1];
-                    }
-                    users[j] = user;
-                    winnings[j] = userWinnings;
-                    wins[j] = totalWins[user];
-                    break;
+    /// Total pending winnings across all resolved markets (not yet withdrawn)
+    function getUserPendingWinnings(address user) external view returns (uint256 total) {
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage m = markets[i];
+            if (m.resolved && !m.cancelled) {
+                uint256 bet = m.userBets[user][m.winningOption];
+                if (bet > 0) {
+                    uint256 poolToDistribute = m.totalPool - ((m.totalPool * PLATFORM_FEE) / 100);
+                    total += (bet * poolToDistribute) / m.optionPools[m.winningOption];
                 }
             }
         }
     }
 
-    function addComment(uint256 marketId, string calldata commentText)
-        external
-        marketExists(marketId)
-    {
-        require(bytes(commentText).length > 0, "Empty comment");
-        marketComments[marketId].push(Comment(msg.sender, commentText, block.timestamp));
-        emit CommentAdded(marketId, msg.sender, commentText, block.timestamp);
+    // ------------------ ADMIN UTILITIES ------------------
+
+    function updateAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "Invalid");
+        emit AdminUpdated(admin, newAdmin);
+        admin = newAdmin;
     }
 
-    function getComments(uint256 marketId)
-        external
-        view
-        marketExists(marketId)
-        returns (Comment[] memory)
-    {
-        return marketComments[marketId];
-    }
-
-    // ✅ Get all active and open markets
-    function getActiveMarkets() external view returns (uint256[] memory) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            if (
-                !market.resolved &&
-                !market.cancelled &&
-                block.timestamp < market.deadline &&
-                !market.bettingPaused
-            ) {
-                count++;
-            }
-        }
-
-        uint256[] memory activeMarketIds = new uint256[](count);
-        uint256 index = 0;
-
-        for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            if (
-                !market.resolved &&
-                !market.cancelled &&
-                block.timestamp < market.deadline &&
-                !market.bettingPaused
-            ) {
-                activeMarketIds[index++] = i;
-            }
-        }
-
-        return activeMarketIds;
-    }
-
-    // ✅ Get user's active bets
-    function getUserActiveBets(address user) 
-        external 
-        view 
-        returns (uint256[] memory marketIds, uint256[] memory optionIndexes, uint256[] memory betAmounts) 
-    {
-        uint256 count = 0;
-
-        for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            if (!market.resolved && !market.cancelled && block.timestamp < market.deadline) {
-                for (uint256 j = 0; j < market.options.length; j++) {
-                    if (market.userBets[user][j] > 0) {
-                        count++;
-                    }
-                }
-            }
-        }
-
-        marketIds = new uint256[](count);
-        optionIndexes = new uint256[](count);
-        betAmounts = new uint256[](count);
-
-        uint256 index = 0;
-
-        for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            if (!market.resolved && !market.cancelled && block.timestamp < market.deadline) {
-                for (uint256 j = 0; j < market.options.length; j++) {
-                    uint256 bet = market.userBets[user][j];
-                    if (bet > 0) {
-                        marketIds[index] = i;
-                        optionIndexes[index] = j;
-                        betAmounts[index] = bet;
-                        index++;
-                    }
-                }
-            }
-        }
-    }
-
-    // ✅ Get all cancelled markets
-    function getCancelledMarkets() external view returns (uint256[] memory cancelledIds) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (markets[i].cancelled) {
-                count++;
-            }
-        }
-        cancelledIds = new uint256[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (markets[i].cancelled) {
-                cancelledIds[index++] = i;
-            }
-        }
-    }
-
-    // ✅ Get all resolved markets
-    function getResolvedMarkets() external view returns (uint256[] memory resolvedIds) {
-        uint256 count = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (markets[i].resolved) {
-                count++;
-            }
-        }
-        resolvedIds = new uint256[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (markets[i].resolved) {
-                resolvedIds[index++] = i;
-            }
-        }
-    }
-
-    // ✅ Get all participants of a market
-    function getMarketParticipants(uint256 marketId) 
-        external 
-        view 
-        marketExists(marketId) 
-        returns (address[] memory participantsList) 
-    {
-        Market storage market = markets[marketId];
-        uint256 count = 0;
-
-        for (uint256 i = 0; i < allUsers.length; i++) {
-            if (market.participants[allUsers[i]]) {
-                count++;
-            }
-        }
-
-        participantsList = new address[](count);
-        uint256 index = 0;
-
-        for (uint256 i = 0; i < allUsers.length; i++) {
-            if (market.participants[allUsers[i]]) {
-                participantsList[index++] = allUsers[i];
-            }
-        }
-    }
-
-    // ✅ Get markets by a specific category
-    function getMarketsByCategory(string memory category)
-        external
-        view
-        returns (uint256[] memory categoryMarketIds)
-    {
-        uint256 count = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (
-                keccak256(bytes(markets[i].category)) ==
-                keccak256(bytes(category))
-            ) {
-                count++;
-            }
-        }
-
-        categoryMarketIds = new uint256[](count);
-        uint256 index = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            if (
-                keccak256(bytes(markets[i].category)) ==
-                keccak256(bytes(category))
-            ) {
-                categoryMarketIds[index++] = i;
-            }
-        }
-    }
-
-    // ---------- NEW UTIL FUNCTIONS ----------
-
-    /// @notice Returns number of unique participants and total pool for a market
-    function getMarketStats(uint256 marketId)
-        external
-        view
-        marketExists(marketId)
-        returns (uint256 participantsCount, uint256 totalPool)
-    {
-        Market storage market = markets[marketId];
-        uint256 count = 0;
-        for (uint256 i = 0; i < allUsers.length; i++) {
-            if (market.participants[allUsers[i]]) {
-                count++;
-            }
-        }
-        participantsCount = count;
-        totalPool = market.totalPool;
-    }
-
-    /// @notice Returns total bet amount by user across all markets, total won (tracked), and marketsJoined (history)
-    function getUserStats(address user)
-        external
-        view
-        returns (uint256 totalBet, uint256 totalWon, uint256 marketsJoined)
-    {
-        // totalBet: sum of bets across all markets/options
-        uint256 sum = 0;
-        for (uint256 i = 0; i < marketCount; i++) {
-            Market storage market = markets[i];
-            for (uint256 j = 0; j < market.options.length; j++) {
-                sum += market.userBets[user][j];
-            }
-        }
-        totalBet = sum;
-        totalWon = totalWinnings[user];
-        marketsJoined = userHistory[user].length;
-    }
-
-    /// @notice Admin can withdraw the contract's ETH balance (platform fees accumulate here).
-    /// @dev IMPORTANT: this transfers the entire contract balance to admin. Ensure platform fees are the only funds expected here.
     function adminWithdrawFees() external onlyAdmin {
         uint256 bal = address(this).balance;
-        require(bal > 0, "No balance to withdraw");
+        require(bal > 0, "No balance");
         payable(admin).transfer(bal);
         emit AdminWithdrawn(admin, bal);
     }
 
-    /// @notice Returns top categories by number of markets. If fewer categories exist than topN, returns all.
+    function emergencyPauseAll() external onlyAdmin {
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (!markets[i].resolved && !markets[i].cancelled) {
+                markets[i].bettingPaused = true;
+            }
+        }
+    }
+
+    function unpauseAll() external onlyAdmin {
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (!markets[i].resolved && !markets[i].cancelled) {
+                markets[i].bettingPaused = false;
+            }
+        }
+    }
+
+    // ------------------ Existing View Functions (shortened) ------------------
+
     function getTopCategories(uint256 topN)
         external
         view
         returns (string[] memory categories, uint256[] memory counts)
     {
-        require(topN > 0, "topN must be > 0");
+        require(topN > 0, "topN > 0");
         uint256 totalCats = allCategories.length;
         if (totalCats == 0) {
-            categories = new string;
-            counts = new uint256;
-            return (categories, counts);
+            return (new string , new uint256 );
         }
+        if (topN > totalCats) topN = totalCats;
 
-        // prepare arrays of size totalCats
         string[] memory catArr = new string[](totalCats);
         uint256[] memory cntArr = new uint256[](totalCats);
-
         for (uint256 i = 0; i < totalCats; i++) {
             catArr[i] = allCategories[i];
             cntArr[i] = categoryCounts[allCategories[i]];
         }
 
-        // We will build topN lists
-        uint256 resultSize = topN <= totalCats ? topN : totalCats;
-        categories = new string[](resultSize);
-        counts = new uint256[](resultSize);
-
-        for (uint256 r = 0; r < resultSize; r++) {
-            // find max index in cntArr
+        // selection sort topN
+        for (uint256 r = 0; r < topN; r++) {
             uint256 maxIdx = r;
             for (uint256 k = r; k < totalCats; k++) {
-                if (cntArr[k] > cntArr[maxIdx]) {
-                    maxIdx = k;
-                }
+                if (cntArr[k] > cntArr[maxIdx]) maxIdx = k;
             }
-            // swap r and maxIdx
             if (maxIdx != r) {
-                string memory tmpS = catArr[r];
-                catArr[r] = catArr[maxIdx];
-                catArr[maxIdx] = tmpS;
-
-                uint256 tmpN = cntArr[r];
-                cntArr[r] = cntArr[maxIdx];
-                cntArr[maxIdx] = tmpN;
+                (catArr[r], catArr[maxIdx]) = (catArr[maxIdx], catArr[r]);
+                (cntArr[r], cntArr[maxIdx]) = (cntArr[maxIdx], cntArr[r]);
             }
-            categories[r] = catArr[r];
-            counts[r] = cntArr[r];
+        }
+
+        categories = new string[](topN);
+        counts = new uint256[](topN);
+        for (uint256 i = 0; i < topN; i++) {
+            categories[i] = catArr[i];
+            counts[i] = cntArr[i];
         }
     }
 }
-
 
