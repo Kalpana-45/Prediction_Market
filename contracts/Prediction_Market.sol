@@ -242,9 +242,7 @@ contract Project {
         emit DeadlineUpdated(marketId, m.deadline);
     }
 
-    // ------------------ NEW ANALYTICS FUNCTIONS ------------------
-
-    /// Platform-wide stats
+    // ------------------ ANALYTICS FUNCTIONS ------------------
     function getPlatformStats()
         external
         view
@@ -266,7 +264,6 @@ contract Project {
         totalVolume = volume;
     }
 
-    /// Largest pool market
     function getLargestMarket()
         external
         view
@@ -282,7 +279,6 @@ contract Project {
         poolSize = maxPool;
     }
 
-    /// Latest N markets (most recent)
     function getLatestMarkets(uint256 n) external view returns (uint256[] memory ids) {
         if (n > marketCount) n = marketCount;
         ids = new uint256[](n);
@@ -291,7 +287,6 @@ contract Project {
         }
     }
 
-    /// Markets by creator
     function getMarketsByCreator(address creator)
         external
         view
@@ -308,7 +303,6 @@ contract Project {
         }
     }
 
-    /// Resolved markets where user participated
     function getUserResolvedMarkets(address user)
         external
         view
@@ -327,7 +321,6 @@ contract Project {
         }
     }
 
-    /// Total pending winnings across all resolved markets (not yet withdrawn)
     function getUserPendingWinnings(address user) external view returns (uint256 total) {
         for (uint256 i = 0; i < marketCount; i++) {
             Market storage m = markets[i];
@@ -342,7 +335,6 @@ contract Project {
     }
 
     // ------------------ ADMIN UTILITIES ------------------
-
     function updateAdmin(address newAdmin) external onlyAdmin {
         require(newAdmin != address(0), "Invalid");
         emit AdminUpdated(admin, newAdmin);
@@ -372,8 +364,7 @@ contract Project {
         }
     }
 
-    // ------------------ Existing View Functions (shortened) ------------------
-
+    // ------------------ VIEW FUNCTIONS ------------------
     function getTopCategories(uint256 topN)
         external
         view
@@ -412,5 +403,23 @@ contract Project {
             counts[i] = cntArr[i];
         }
     }
-}
 
+    // ------------------ NEW FUNCTION ------------------
+    /// @notice Returns quick summary of a market
+    function getMarketSummary(uint256 marketId)
+        external
+        view
+        returns (
+            string memory question,
+            string memory category,
+            uint256 deadline,
+            uint256 totalPool,
+            bool resolved,
+            bool cancelled
+        )
+    {
+        require(marketId < marketCount, "Invalid ID");
+        Market storage m = markets[marketId];
+        return (m.question, m.category, m.deadline, m.totalPool, m.resolved, m.cancelled);
+    }
+}
