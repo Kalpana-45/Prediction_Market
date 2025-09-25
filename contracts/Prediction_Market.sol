@@ -125,14 +125,14 @@ contract Project {
         require(msg.value >= m.minBet, "Below min");
         require(msg.value <= m.maxBet, "Above max");
 
-        if (m.userBets[msg.sender][optionIndex] == 0) {
+        if (m.userBets[msg.sender][optionIndex] == 0 && !m.participants[msg.sender]) {
             userHistory[msg.sender].push(marketId);
             allUsers.push(msg.sender);
+            m.participants[msg.sender] = true;
         }
         m.userBets[msg.sender][optionIndex] += msg.value;
         m.optionPools[optionIndex] += msg.value;
         m.totalPool += msg.value;
-        m.participants[msg.sender] = true;
 
         emit BetPlaced(marketId, msg.sender, optionIndex, msg.value);
     }
@@ -404,8 +404,6 @@ contract Project {
         }
     }
 
-    // ------------------ NEW FUNCTION ------------------
-    /// @notice Returns quick summary of a market
     function getMarketSummary(uint256 marketId)
         external
         view
@@ -422,4 +420,82 @@ contract Project {
         Market storage m = markets[marketId];
         return (m.question, m.category, m.deadline, m.totalPool, m.resolved, m.cancelled);
     }
-}
+
+    // ------------------ 🔥 NEW EXTENDED FUNCTIONS ------------------
+
+    /// @notice Full market details including option pools & participants count
+    function getMarketDetails(uint256 marketId)
+        external
+        view
+        returns (
+            string memory question,
+            string[] memory options,
+            uint256[] memory pools,
+            uint256 deadline,
+            uint256 minBet,
+            uint256 maxBet,
+            uint256 totalPool,
+            bool resolved,
+            bool cancelled,
+            uint256 participantCount
+        )
+    {
+        require(marketId < marketCount, "Invalid ID");
+        Market storage m = markets[marketId];
+        uint256[] memory poolArr = new uint256[](m.options.length);
+        uint256 count;
+        for (uint256 i = 0; i < m.options.length; i++) {
+            poolArr[i] = m.optionPools[i];
+        }
+        // count participants
+        for (uint256 i = 0; i < allUsers.length; i++) {
+            if (m.participants[allUsers[i]]) count++;
+        }
+        return (
+            m.question,
+            m.options,
+            poolArr,
+            m.deadline,
+            m.minBet,
+            m.maxBet,
+            m.totalPool,
+            m.resolved,
+            m.cancelled,
+            count
+        );
+    }
+
+    /// @notice Get how much a user bet on each option of a market
+    function getUserBetsInMarket(uint256 marketId, address user)
+        external
+        view
+        returns (uint256[] memory bets)
+    {
+        require(marketId < marketCount, "Invalid ID");
+        Market storage m = markets[marketId];
+        bets = new uint256[](m.options.length);
+        for (uint256 i = 0; i < m.options.length; i++) {
+            bets[i] = m.userBets[user][i];
+        }
+    }
+
+    /// @notice Get active market IDs
+    function getActiveMarkets() external view returns (uint256[] memory ids) {
+        uint256 count;
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage m = markets[i];
+            if (block.timestamp < m.deadline && !m.resolved && !m.cancelled && !m.bettingPaused) count++;
+        }
+        ids = new uint256[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < marketCount; i++) {
+            Market storage m = markets[i];
+            if (block.timestamp < m.deadline && !m.resolved && !m.cancelled && !m.bettingPaused) {
+                ids[idx++] = i;
+            }
+        }
+    }
+
+    /// @notice Get resolved markets
+    function getResolvedMarkets() external view returns (uint256[] memory ids) {
+        uint
