@@ -373,7 +373,7 @@ contract Project {
         require(topN > 0, "topN > 0");
         uint256 totalCats = allCategories.length;
         if (totalCats == 0) {
-            return (new string , new uint256 );
+            return (new string, new uint256);
         }
         if (topN > totalCats) topN = totalCats;
 
@@ -498,4 +498,19 @@ contract Project {
 
     /// @notice Get resolved markets
     function getResolvedMarkets() external view returns (uint256[] memory ids) {
-        uint
+        uint256 count;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].resolved && !markets[i].cancelled) {
+                count++;
+            }
+        }
+        ids = new uint256[](count);
+        uint256 idx;
+        for (uint256 i = 0; i < marketCount; i++) {
+            if (markets[i].resolved && !markets[i].cancelled) {
+                ids[idx++] = i;
+            }
+        }
+    }
+}
+
